@@ -26,7 +26,7 @@ const WireframeOrb = dynamic(() => import("@/components/orbs/wireframe-orb").the
 
 type OrbType = "elevenlabs" | "sphere" | "glow" | "particle" | "blob" | "crystal" | "wave" | "bubble" | "wireframe"
 
-const orbList: { id: OrbType; name: string; desc: string; icon: React.ElementType }[] = [
+const orbList: { id: OrbType; name: string; desc: string; icon: React.ComponentType<{ size?: number; className?: string }> }[] = [
   { id: "elevenlabs", name: "ElevenLabs", desc: "Perlin noise flat shader", icon: Circle },
   { id: "sphere", name: "3D Sphere", desc: "Displaced sphere with noise", icon: Atom },
   { id: "blob", name: "Liquid Blob", desc: "Metallic organic blob", icon: Droplets },
