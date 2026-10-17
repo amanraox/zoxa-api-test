@@ -1,48 +1,37 @@
-import { NextRequest, NextResponse } from "next/server";
+import { buildAudioSocketUrl, errorResponse, relay, serverApiKey, upstreamFailure, zoxaFetch } from "@/lib/zoxa/server";
 
-export async function POST(req: NextRequest) {
-  const apiKey = process.env.ZOXA_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: "ZOXA_API_KEY not configured" }, { status: 500 });
+/**
+ * POST /api/call — create a raw-PCM WebSocket call.
+ *
+ * The body is forwarded to `POST /api/v1/call` exactly as the console built it
+ * (including any raw edits), so this exercises the public contract verbatim.
+ * On success the response gains `wsUrl`: the absolute, authenticated socket URL.
+ */
+
+const MAX_BODY_BYTES = 512 * 1024;
+
+export async function POST(req: Request) {
+  const body = await req.text();
+  if (body.length > MAX_BODY_BYTES) return errorResponse(413, "Request body too large");
+  try {
+    JSON.parse(body);
+  } catch {
+    return errorResponse(400, "Request body is not valid JSON");
   }
 
-  const body = await req.json();
-
-  const res = await fetch("https://dashboard.zoxa.ai/api/v1/call", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-Key": apiKey,
-    },
-    body: JSON.stringify(body),
-  });
-
-  const data = await res.json();
-  if (!res.ok) {
-    return NextResponse.json(data, { status: res.status });
+  let apiKey: string;
+  let res: Response;
+  try {
+    apiKey = serverApiKey();
+    res = await zoxaFetch(apiKey, "/call", { method: "POST", body });
+  } catch (err) {
+    return upstreamFailure(err);
   }
+  if (!res.ok) return relay(res);
 
-  // Build the authenticated audio WebSocket URL
-  // Zoxa returns audioUrl as relative path: /api/v1/ws/audio/{callId}
-  const baseWsUrl = "wss://dashboard.zoxa.ai";
-  let audioUrl: string;
-
-  if (data.audioUrl) {
-    const rawUrl = data.audioUrl as string;
-    const fullUrl = rawUrl.startsWith("ws") ? rawUrl : `${baseWsUrl}${rawUrl}`;
-    if (fullUrl.includes("api_key=")) {
-      audioUrl = fullUrl;
-    } else {
-      const separator = fullUrl.includes("?") ? "&" : "?";
-      audioUrl = `${fullUrl}${separator}api_key=${apiKey}`;
-    }
-  } else {
-    // Fallback: construct from callId
-    audioUrl = `${baseWsUrl}/api/v1/ws/audio/${data.callId}?api_key=${apiKey}`;
+  const data = (await res.json()) as { callId?: string; audioUrl?: string };
+  if (!data.callId || !data.audioUrl) {
+    return errorResponse(502, "zoxa returned no callId/audioUrl — is the transport websocket?");
   }
-
-  return NextResponse.json({
-    ...data,
-    audioUrl,
-  });
+  return Response.json({ ...data, wsUrl: buildAudioSocketUrl(apiKey, data.audioUrl) }, { status: res.status });
 }

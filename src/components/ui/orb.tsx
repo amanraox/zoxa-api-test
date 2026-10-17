@@ -1,6 +1,6 @@
 "use client"
 
-import { Suspense, useEffect, useMemo, useRef } from "react"
+import { Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { useTexture } from "@react-three/drei"
 import { Canvas, useFrame, useThree } from "@react-three/fiber"
 import * as THREE from "three"
@@ -159,13 +159,14 @@ function Scene({
   const { gl } = useThree()
   const circleRef =
     useRef<THREE.Mesh<THREE.CircleGeometry, THREE.ShaderMaterial>>(null)
-  const initialColorsRef = useRef<[string, string]>(colors)
+  const [initialColors] = useState<[string, string]>(colors)
   const targetColor1Ref = useRef(new THREE.Color(colors[0]))
   const targetColor2Ref = useRef(new THREE.Color(colors[1]))
   const animSpeedRef = useRef(0.1)
-  const perlinNoiseTexture = useTexture(
-    "/perlin-noise.png"
-  )
+  const perlinNoiseTexture = useTexture("/perlin-noise.png", (texture) => {
+    texture.wrapS = THREE.RepeatWrapping
+    texture.wrapT = THREE.RepeatWrapping
+  })
 
   const agentRef = useRef<AgentState>(agentState)
   const modeRef = useRef<"auto" | "manual">(volumeMode)
@@ -194,10 +195,8 @@ function Scene({
     )
   }, [manualOutput, outputVolumeRef, getOutputVolume])
 
-  const random = useMemo(
-    () => splitmix32(seed ?? Math.floor(Math.random() * 2 ** 32)),
-    [seed]
-  )
+  const [fallbackSeed] = useState(() => Math.floor(Math.random() * 2 ** 32))
+  const random = useMemo(() => splitmix32(seed ?? fallbackSeed), [seed, fallbackSeed])
   const offsets = useMemo(
     () =>
       new Float32Array(Array.from({ length: 7 }, () => random() * Math.PI * 2)),
@@ -235,6 +234,8 @@ function Scene({
       if (live[1]) targetColor2Ref.current.set(live[1])
     }
     const u = mat.uniforms
+    // three.js updates GPU uniforms imperatively every frame — mutation is the API.
+    // eslint-disable-next-line react-hooks/immutability
     u.uTime.value += delta * timeSpeed
 
     if (u.uOpacity.value < 1) {
@@ -311,15 +312,14 @@ function Scene({
       canvas.removeEventListener("webglcontextlost", onContextLost, false)
   }, [gl])
 
+  // Built once per texture/seed; shader tweaks are pushed every frame in useFrame.
   const uniforms = useMemo(() => {
-    perlinNoiseTexture.wrapS = THREE.RepeatWrapping
-    perlinNoiseTexture.wrapT = THREE.RepeatWrapping
     const isDark =
       typeof document !== "undefined" &&
       document.documentElement.classList.contains("dark")
     return {
-      uColor1: new THREE.Uniform(new THREE.Color(initialColorsRef.current[0])),
-      uColor2: new THREE.Uniform(new THREE.Color(initialColorsRef.current[1])),
+      uColor1: new THREE.Uniform(new THREE.Color(initialColors[0])),
+      uColor2: new THREE.Uniform(new THREE.Color(initialColors[1])),
       uOffsets: { value: offsets },
       uPerlinTexture: new THREE.Uniform(perlinNoiseTexture),
       uTime: new THREE.Uniform(0),
@@ -344,7 +344,8 @@ function Scene({
       uOvalRotationAmp: new THREE.Uniform(ovalRotationAmplitude),
       uOvalRotationPeriod: new THREE.Uniform(ovalRotationPeriod),
     }
-  }, [perlinNoiseTexture, offsets])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tweak values are applied per frame, not baked in
+  }, [perlinNoiseTexture, offsets, initialColors])
 
   return (
     <mesh ref={circleRef}>
